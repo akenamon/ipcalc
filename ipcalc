@@ -1,0 +1,184 @@
+#!/bin/bash
+
+ip=$1
+
+
+function new_oct(){
+	local n=$1
+	local LIST=(1 2 4 8 16 32 64 128)
+	local oct=''
+	for(( i=7; i >= 0; i--)); do
+		if [[  $(expr $n - ${LIST[$i]})  -ge 0 ]]; then
+			n=$(expr $n - ${LIST[$i]}) 	
+			oct=$oct'1'
+		else
+			oct=$oct'0'
+		fi
+	done
+	echo $oct
+}
+
+
+function convert_ip_to_bin(){
+	ip=$1
+	local ip=$(echo $ip | cut -d'/' -f1)
+	for i in 1 2 3 4
+	do
+		new_oct	$(echo $ip | cut -d'.' -f$i)
+	done
+}
+
+
+function get_network(){
+        local ip=$1
+        local bits=$2
+	local cdir=$(echo $ip | cut -d'/' -f2)
+	declare -i n=$(expr 32 - $cdir)
+	hosts_bits=$(for i in $(seq $n); do echo -n 0; done)
+        echo ${bits:0:$cdir}$hosts_bits
+}
+
+
+function get_broadcast(){
+        local ip=$1
+        local bits=$2
+	local cdir=$(echo $ip | cut -d'/' -f2)
+	declare -i n=$(expr 32 - $cdir)
+	local hosts_bits=$(for i in $(seq $n); do echo -n 1; done)
+        echo ${bits:0:$cdir}$hosts_bits
+}
+
+
+function get_host_min(){
+	local network_bin=$1
+	echo ${network_bin:0:31}1
+}
+
+
+function get_host_max(){
+	local broadcast_bin=$1
+	echo ${broadcast_bin:0:31}0
+}
+
+
+function get_netmask(){
+	local ip=$1
+	declare -i cdir=$(echo $ip | cut -d'/' -f2)
+	declare -i n=$(expr 32 - $cdir)
+	local hosts_bits=$(for i in $(seq $n); do echo -n 0; done)
+	local network_bits=$(for i in $(seq $cdir); do echo -n 1; done)
+	echo $network_bits$hosts_bits
+}
+
+
+function get_wildcard(){
+	local ip=$1
+	declare -i cdir=$(echo $ip | cut -d'/' -f2)
+	declare -i n=$(expr 32 - $cdir)
+	local hosts_bits=$(for i in $(seq $n); do echo -n 1; done)
+	local network_bits=$(for i in $(seq $cdir); do echo -n 0; done)
+	echo $network_bits$hosts_bits
+}
+
+
+function bin_to_ip_aux(){
+	local oct=$1	
+	local LIST=(128 64 32 16 8 4 2 1)
+	declare -i total=0
+
+	for(( i=0; i <= 7; i++)); do
+		if [[ ${oct:$i:1} -eq 1 ]]; then
+			total=$(expr $total + ${LIST[$i]})	
+		fi
+	done
+	echo $total
+}
+
+function bin_to_ip(){
+	local bin=$1
+
+	local oct1=${bin:0:8}
+	local oct2=${bin:8:8}
+	local oct3=${bin:16:8}
+	local oct4=${bin:24:8}
+	
+	local BIN_OCTS=($oct1 $oct2 $oct3 $oct4)
+	for oct in ${BIN_OCTS[@]}; do
+		bin_to_ip_aux $oct
+	done
+}
+
+
+function convert_to_ip(){
+	local input=$1
+	PARTS=( $(bin_to_ip $input) )
+	echo "${PARTS[0]}.${PARTS[1]}.${PARTS[2]}.${PARTS[3]}"
+}
+
+
+function verify_class(){
+	local net=$1
+
+	A='0xxx'
+	B='10xx'
+	C='110x'
+	D='1110'
+	
+	if [[ ${net:0:1} -eq 0 ]];then
+		CLASS=A
+	elif [[ ${net:1:1} -eq 0 ]]; then	
+		CLASS=B 
+	elif [[ ${net:2:1} -eq 0 ]]; then
+		CLASS=C
+	elif [[ ${net:3:1} -eq 0 ]]; then
+		CLASS=D
+	else
+		CLASS=E
+	fi
+	
+}
+
+
+function _main(){
+	cdir=$(echo $ip | cut -d'/' -f2)
+        
+	bfactor=$((32-$cdir))
+        hosts_total=$((2**$bfactor-2))	
+	
+	OCTS=($( convert_ip_to_bin $ip ))
+	bits=${OCTS[0]}${OCTS[1]}${OCTS[2]}${OCTS[3]}
+	ip_bin=$bits
+
+	netmask_bin=$(get_netmask $ip)
+	netmask_ip=$(convert_to_ip $netmask_bin)
+
+	wildcard_bin=$(get_wildcard $ip)
+	wildcard_ip=$(convert_to_ip $wildcard_bin)
+
+	network_bin=$(get_network $ip $bits)
+	network_ip=$(convert_to_ip $network_bin)
+
+	broadcast_bin=$(get_broadcast $ip $bits)
+	broadcast_ip=$(convert_to_ip $broadcast_bin)
+
+	host_min_bin=$(get_host_min $network_bin)
+	host_min_ip=$(convert_to_ip $host_min_bin)
+
+	host_max_bin=$(get_host_max $broadcast_bin)
+	host_max_ip=$(convert_to_ip $host_max_bin)
+	
+	verify_class $network_bin
+
+	echo -e "
+Address:\t$ip\t$ip_bin
+Netmask:\t$netmask_ip = $cdir\t$netmask_bin
+Wildcard:\t$wildcard_ip\t\t$wildcard_bin
+Network:\t$network_ip/$cdir\t\t$network_bin\t(Class $CLASS)
+Broadcast:\t$broadcast_ip\t\t$broadcast_bin
+HostMin:\t$host_min_ip\t\t$host_min_bin
+HostMax:\t$host_max_ip\t\t$host_max_bin
+Hosts/Net:\t$hosts_total
+"
+}
+
+_main
